@@ -1,6 +1,5 @@
 # omnivoice-server
 
-[![CI](https://github.com/maemreyo/omnivoice-server/actions/workflows/ci.yml/badge.svg)](https://github.com/maemreyo/omnivoice-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -91,6 +90,22 @@ The server will start at `http://127.0.0.1:8880` by default.
 - Cloud options: AWS g5.xlarge (~$1/hr), GCP T4/V100, RunPod (~$0.40/hr)
 
 **Detailed reports**: See [`docs/verification/`](./docs/verification/) for full verification results and technical details.
+
+### Audio Samples
+
+Listen to verified voice samples:
+
+**English (Female, American accent)** - 199KB
+<audio controls src="./voice_samples/test_english.wav"></audio>
+
+[Download English sample](./voice_samples/test_english.wav)
+
+**Vietnamese (Female)** - 203KB
+<audio controls src="./voice_samples/test_vietnamese.wav"></audio>
+
+[Download Vietnamese sample](./voice_samples/test_vietnamese.wav)
+
+Both samples demonstrate clear, natural speech quality on CPU device.
 
 ### First Request
 
