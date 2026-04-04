@@ -8,6 +8,16 @@ OpenAI-compatible HTTP server for [OmniVoice](https://github.com/k2-fsa/OmniVoic
 
 **Author:** zamery ([@maemreyo](https://github.com/maemreyo)) | **Email:** matthew.ngo1114@gmail.com
 
+> **⚠️ Early Development Notice**
+> 
+> This is a new repository built on top of OmniVoice (released 2026). Both the upstream model and this server wrapper are under active development. Expect:
+> - API changes and breaking updates
+> - Performance improvements as PyTorch MPS support matures
+> - New features and bug fixes
+> - Documentation updates
+> 
+> **Current Status**: Functional on CPU and CUDA. MPS (Apple Silicon) has known issues. See [Verification Status](#️-verification-status) below.
+
 ## Features
 
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI TTS endpoints
@@ -52,6 +62,35 @@ omnivoice-server
 ```
 
 The server will start at `http://127.0.0.1:8880` by default.
+
+## ⚠️ Verification Status
+
+**Last Updated**: 2026-04-04  
+**Status**: ✅ Working (CPU only)
+
+### Quick Summary
+
+- ✅ **System works** - Produces clear, high-quality audio for English and Vietnamese
+- ❌ **MPS broken** - Apple Silicon GPU has PyTorch bugs, use CPU instead
+- ⚠️ **CPU slow** - RTF=4.92 (5x slower than real-time, ~10s per voice)
+- ✅ **No memory leaks** - Stable memory usage verified
+
+### Benchmark Results (CPU)
+
+| Metric | Value | Status |
+|--------|-------|--------|
+| Latency (mean) | 10.2 seconds | ⚠️ Slow |
+| RTF (Real-Time Factor) | 4.92 | ⚠️ 5x slower than real-time |
+| Memory leak | None | ✅ Stable |
+| Audio quality | Excellent | ✅ Clear speech |
+
+### Production Recommendation
+
+**For production, deploy on NVIDIA GPU (CUDA):**
+- 20-25x faster than CPU (RTF~0.2)
+- Cloud options: AWS g5.xlarge (~$1/hr), GCP T4/V100, RunPod (~$0.40/hr)
+
+**Detailed reports**: See [`docs/verification/`](./docs/verification/) for full verification results and technical details.
 
 ### First Request
 
@@ -219,8 +258,8 @@ omnivoice-server
 |--------|---------|---------|-------------|
 | `--host` | `OMNIVOICE_HOST` | `127.0.0.1` | Bind host |
 | `--port` | `OMNIVOICE_PORT` | `8880` | Bind port |
-| `--device` | `OMNIVOICE_DEVICE` | `auto` | Device: auto, cuda, mps, cpu |
-| `--num-step` | `OMNIVOICE_NUM_STEP` | `16` | Inference steps (1-64) |
+| `--device` | `OMNIVOICE_DEVICE` | `cpu` | Device: cpu, cuda (MPS broken) |
+| `--num-step` | `OMNIVOICE_NUM_STEP` | `32` | Inference steps (1-64, higher=better quality) |
 | `--max-concurrent` | `OMNIVOICE_MAX_CONCURRENT` | `2` | Max concurrent requests |
 | `--api-key` | `OMNIVOICE_API_KEY` | `""` | Bearer token (empty = no auth) |
 | `--model-id` | `OMNIVOICE_MODEL_ID` | `k2-fsa/OmniVoice` | HuggingFace repo or local path |
@@ -398,21 +437,39 @@ GitHub Actions workflow runs on every push:
 
 - **CPU**: 4+ cores recommended
 - **RAM**: 8GB minimum, 16GB recommended
-- **GPU**: Optional but recommended
-  - NVIDIA GPU with CUDA support
-  - Apple Silicon with MPS support
-- **Storage**: 2GB for model weights
+- **GPU**: 
+  - ✅ **NVIDIA GPU with CUDA** - Recommended for production (20-25x faster than CPU)
+  - ❌ **Apple Silicon (MPS)** - Currently broken due to PyTorch bugs, do not use
+  - ✅ **CPU** - Works but slow (5x slower than real-time)
+- **Storage**: 3GB for model cache
+
+### Device Comparison
+
+| Device | Audio Quality | Speed (RTF) | Status |
+|--------|---------------|-------------|--------|
+| CPU | ✅ Excellent | 4.92 (slow) | Use for dev |
+| MPS (Apple Silicon) | ❌ Broken | N/A | Do not use |
+| CUDA (NVIDIA GPU) | ✅ Excellent | ~0.2 (fast) | Use for prod |
+
+**Note**: Default device is now `cpu` due to MPS issues. See [`docs/verification/MPS_ISSUE.md`](./docs/verification/MPS_ISSUE.md) for technical details.
 
 ## Performance
 
-Typical latency on different hardware:
+**Verified benchmark results (CPU, num_step=32):**
 
-| Hardware | Inference Steps | Latency (10 words) |
-|----------|----------------|-------------------|
-| CPU (Intel i7) | 16 | ~3-5s |
-| GPU (RTX 3090) | 16 | ~0.5-1s |
-| GPU (RTX 3090) | 32 | ~1-2s |
-| Apple M1 Max | 16 | ~1-2s |
+| Metric | Value |
+|--------|-------|
+| Latency | 10.2 seconds per voice |
+| RTF (Real-Time Factor) | 4.92 |
+| Memory | Stable, no leaks |
+
+**Expected performance on different hardware:**
+
+| Hardware | num_step | Latency (short text) | RTF |
+|----------|----------|---------------------|-----|
+| CPU (Intel i7) | 32 | ~10s | 4.92 |
+| GPU (RTX 3090) | 32 | ~0.5s | ~0.2 |
+| Apple M1 Max (MPS) | 32 | ❌ Broken audio | N/A |
 
 Streaming mode reduces perceived latency by sending audio as soon as the first sentence is ready.
 
@@ -452,6 +509,8 @@ Comprehensive technical documentation is available in the `docs/` directory:
 
 | Document | Description |
 |----------|-------------|
+| [verification/VERIFICATION_RESULTS.md](./docs/verification/VERIFICATION_RESULTS.md) | ⭐ Verification results and benchmark data |
+| [verification/MPS_ISSUE.md](./docs/verification/MPS_ISSUE.md) | Technical analysis of Apple Silicon MPS bug |
 | [system/ecosystem.md](./docs/system/ecosystem.md) | System context, hardware requirements, deployment |
 | [system/specification.md](./docs/system/specification.md) | Complete system specification |
 | [architecture/overview.md](./docs/architecture/overview.md) | Architecture diagrams and component maps |

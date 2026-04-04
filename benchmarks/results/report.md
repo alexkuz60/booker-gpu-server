@@ -1,18 +1,18 @@
 # OmniVoice Benchmark Results
 
-Device: `cpu` | Steps: `8` | Runs per case: `5`
+Device: `cpu` | Steps: `32` | Runs per case: `5`
 
 ## Latency & RTF
 
 | Device | Steps | Test Case | Mean (ms) | p95 (ms) | Mean RTF | Errors |
 |--------|-------|-----------|-----------|----------|----------|--------|
-| cpu | 8 | short_auto | 3273 | 3870 | 1.5850 | 0 |
+| cpu | 32 | short_auto | 10232 | 10446 | 4.9193 | 0 |
 
 ## Memory (RAM across all runs)
 
 | Test Case | Initial RAM (MB) | Final RAM (MB) | Total Δ (MB) | Leak? |
 |-----------|-----------------|----------------|--------------|-------|
-| short_auto | 2254 | 2253 | -1 | ✅ NO |
+| short_auto | 2480 | 2406 | -73 | ✅ NO |
 
 ## Interpretation
 

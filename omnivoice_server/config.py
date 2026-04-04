@@ -28,8 +28,8 @@ class Settings(BaseSettings):
         default="k2-fsa/OmniVoice",
         description="HuggingFace repo ID or local path",
     )
-    device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
-    num_step: int = Field(default=16, ge=1, le=64)
+    device: Literal["auto", "cuda", "mps", "cpu"] = "cpu"  # MPS broken - use CPU
+    num_step: int = Field(default=32, ge=1, le=64)  # Upstream default
 
     # Advanced generation params (passed through to OmniVoice.generate())
     # Expose the ones users are likely to tune; leave the rest at upstream defaults.
