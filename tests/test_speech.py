@@ -81,3 +81,60 @@ def test_speech_pcm_format(client):
     )
     assert resp.status_code == 200
     assert "audio/pcm" in resp.headers["content-type"]
+
+
+def test_speech_custom_guidance_scale(client):
+    """Custom guidance_scale parameter should be accepted."""
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "guidance_scale": 3.0,
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_speech_custom_denoise(client):
+    """Custom denoise parameter should be accepted."""
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "denoise": False,
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_speech_custom_t_shift(client):
+    """Custom t_shift parameter should be accepted."""
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "t_shift": 0.2,
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_speech_clone_invalid_audio_format(client, tmp_path):
+    """Clone endpoint should reject non-audio files with 422."""
+    # Create a text file pretending to be audio
+    invalid_file = tmp_path / "fake.wav"
+    invalid_file.write_text("This is not audio data")
+
+    with open(invalid_file, "rb") as f:
+        resp = client.post(
+            "/v1/audio/speech/clone",
+            data={
+                "text": "Hello world",
+                "speed": 1.0,
+            },
+            files={"ref_audio": ("fake.wav", f, "audio/wav")},
+        )
+
+    assert resp.status_code == 422
+    assert "could not parse as audio file" in resp.json()["detail"]
+

@@ -36,6 +36,9 @@ class SpeechRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     stream: bool = Field(default=False)
     num_step: int | None = Field(default=None, ge=1, le=64)
+    guidance_scale: float | None = Field(default=None, ge=0.0, le=10.0)
+    denoise: bool | None = Field(default=None)
+    t_shift: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("model")
     @classmethod
@@ -119,6 +122,9 @@ async def create_speech(
         ref_text=ref_text,
         speed=body.speed,
         num_step=body.num_step,
+        guidance_scale=body.guidance_scale,
+        denoise=body.denoise,
+        t_shift=body.t_shift,
     )
 
     if body.stream:
@@ -191,6 +197,9 @@ async def _stream_sentences(
             ref_text=base_req.ref_text,
             speed=base_req.speed,
             num_step=base_req.num_step,
+            guidance_scale=base_req.guidance_scale,
+            denoise=base_req.denoise,
+            t_shift=base_req.t_shift,
         )
         try:
             result = await inference_svc.synthesize(req)
@@ -214,16 +223,20 @@ async def create_speech_clone(
     ref_text: str | None = Form(default=None),
     speed: float = Form(default=1.0, ge=0.25, le=4.0),
     num_step: int | None = Form(default=None, ge=1, le=64),
+    guidance_scale: float | None = Form(default=None, ge=0.0, le=10.0),
+    denoise: bool | None = Form(default=None),
+    t_shift: float | None = Form(default=None, ge=0.0, le=1.0),
     inference_svc: InferenceService = Depends(_get_inference),
     metrics_svc: MetricsService = Depends(_get_metrics),
     cfg=Depends(_get_cfg),
 ):
     """One-shot voice cloning. Upload reference audio + text to synthesize."""
-    from ..utils.audio import read_upload_bounded
+    from ..utils.audio import read_upload_bounded, validate_audio_bytes
 
     raw = await ref_audio.read()
     try:
         audio_bytes = read_upload_bounded(raw, cfg.max_ref_audio_bytes)
+        validate_audio_bytes(audio_bytes)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -242,6 +255,9 @@ async def create_speech_clone(
             ref_text=ref_text,
             speed=speed,
             num_step=num_step,
+            guidance_scale=guidance_scale,
+            denoise=denoise,
+            t_shift=t_shift,
         )
         try:
             result = await inference_svc.synthesize(req)

@@ -400,6 +400,64 @@ Health check endpoint.
 
 Prometheus-style metrics.
 
+## Advanced Features
+
+### Non-Verbal Symbols
+
+OmniVoice natively supports non-verbal symbols inline in text. These are pass-through features from the upstream model:
+
+```python
+response = httpx.post(
+    "http://127.0.0.1:8880/v1/audio/speech",
+    json={
+        "input": "Hello [laughter] this is amazing [breath] really cool [sigh]",
+        "voice": "auto"
+    }
+)
+```
+
+Supported symbols:
+- `[laughter]` - Natural laughter
+- `[breath]` - Breathing sound
+- `[sigh]` - Sighing sound
+- Other non-verbal expressions supported by OmniVoice
+
+### Pronunciation Correction
+
+For Chinese text, you can provide pinyin hints for pronunciation correction:
+
+```python
+response = httpx.post(
+    "http://127.0.0.1:8880/v1/audio/speech",
+    json={
+        "input": "这是拼音(pīn yīn)提示的例子",
+        "voice": "auto"
+    }
+)
+```
+
+The server passes these hints directly to OmniVoice without modification.
+
+### Advanced Generation Parameters
+
+Fine-tune synthesis quality and characteristics with per-request parameters:
+
+```python
+response = httpx.post(
+    "http://127.0.0.1:8880/v1/audio/speech",
+    json={
+        "input": "Hello world",
+        "voice": "auto",
+        "num_step": 32,          # Inference steps (1-64, higher=better quality)
+        "guidance_scale": 3.0,   # CFG scale (0-10, higher=stronger conditioning)
+        "denoise": True,         # Enable denoising (recommended)
+        "t_shift": 0.1          # Noise schedule shift (0-1, affects quality/speed)
+    }
+)
+```
+
+These parameters override server defaults on a per-request basis.
+
 ## Examples
 
 See the `examples/` directory:
@@ -587,6 +645,48 @@ Increase inference steps for better quality:
 ```bash
 omnivoice-server --num-step 32
 ```
+
+## Known Limitations
+
+### Streaming Voice Consistency
+
+When using `stream=True` with `voice="auto"`, each sentence is synthesized independently. This can result in different voices being selected for different sentences within the same stream, as there is no shared state between sentence-level synthesis calls.
+
+**Workarounds:**
+
+1. **Use voice cloning for consistent streaming:**
+   ```python
+   # Create a profile first
+   with open("reference.wav", "rb") as f:
+       httpx.post(
+           "http://127.0.0.1:8880/v1/voices/profiles",
+           data={"profile_id": "consistent_voice"},
+           files={"ref_audio": f}
+       )
+   
+   # Stream with consistent voice
+   with httpx.stream(
+       "POST",
+       "http://127.0.0.1:8880/v1/audio/speech",
+       json={
+           "input": "Long text...",
+           "voice": "clone:consistent_voice",
+           "stream": True
+       }
+   ) as response:
+       for chunk in response.iter_bytes():
+           play_audio(chunk)
+   ```
+
+2. **Use design mode with specific attributes:**
+   ```python
+   {
+       "voice": "design:female,british accent",
+       "stream": True
+   }
+   ```
+
+This limitation is inherent to the sentence-by-sentence streaming architecture and does not affect non-streaming synthesis.
 
 ## Documentation
 

@@ -88,9 +88,3 @@ def validate_audio_bytes(data: bytes, field_name: str = "ref_audio") -> None:
             "Supported formats: WAV, MP3, FLAC, OGG. "
             f"Original error: {e}"
         ) from e
-
-
-def compute_duration_s(tensors: list[torch.Tensor]) -> float:
-    """Return total audio duration in seconds."""
-    total_samples = sum(t.shape[-1] for t in tensors)
-    return total_samples / SAMPLE_RATE

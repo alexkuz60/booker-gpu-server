@@ -2,7 +2,7 @@
 
 > **Version**: 2026-04-04
 > **Status**: Pre-implementation
-> **Repo**: `github.com/<you>/omnivoice-server` (separate repo, Apache 2.0)
+> **Repo**: `github.com/<you>/omnivoice-server` (separate repo, MIT License)
 > **Purpose**: Tài liệu đủ chi tiết để implement không cần hỏi thêm
 
 ---
@@ -107,7 +107,7 @@ audio = model.generate(
 audio = model.generate(text="Hello", speed=1.2)
 
 # --- num_step ---
-audio = model.generate(text="Hello", num_step=16)  # default 32
+audio = model.generate(text="Hello", num_step=32)  # default 32 (upstream default)
 ```
 
 **Quan trọng:**
@@ -236,7 +236,7 @@ name = "omnivoice-server"
 version = "0.1.0"
 description = "OpenAI-compatible HTTP server for OmniVoice TTS"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "Your Name", email = "you@example.com" }]
 
@@ -250,7 +250,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "omnivoice>=0.1.0",
+    "omnivoice>=0.1.0,<0.2.0",  # Pin to 0.1.x to avoid breaking changes
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
@@ -331,8 +331,8 @@ class Settings(BaseSettings):
         default="k2-fsa/OmniVoice",
         description="HuggingFace repo ID or local path",
     )
-    device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
-    num_step: int = Field(default=16, ge=1, le=64)
+    device: Literal["auto", "cuda", "mps", "cpu"] = "cpu"  # MPS broken, use CPU
+    num_step: int = Field(default=32, ge=1, le=64)  # Upstream default is 32
 
     # Advanced generation params (passed through to OmniVoice.generate())
     # Expose the ones users are likely to tune; leave the rest at upstream defaults.
@@ -766,7 +766,7 @@ class OmniVoiceAdapter:
             )
             minimal = {
                 "text": kwargs["text"],
-                "num_step": kwargs.get("num_step", 16),
+                "num_step": kwargs.get("num_step", 32),
             }
             if "instruct" in kwargs:
                 minimal["instruct"] = kwargs["instruct"]

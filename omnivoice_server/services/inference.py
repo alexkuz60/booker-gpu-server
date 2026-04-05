@@ -37,6 +37,7 @@ class SynthesisRequest:
     # Advanced passthrough — None means "use upstream default"
     guidance_scale: float | None = None
     denoise: bool | None = None
+    t_shift: float | None = None
 
 
 @dataclass
@@ -69,6 +70,7 @@ class OmniVoiceAdapter:
             req.guidance_scale if req.guidance_scale is not None else self._cfg.guidance_scale
         )
         denoise = req.denoise if req.denoise is not None else self._cfg.denoise
+        t_shift = req.t_shift if req.t_shift is not None else self._cfg.t_shift
 
         kwargs: dict = {
             "text": req.text,
@@ -76,6 +78,7 @@ class OmniVoiceAdapter:
             "speed": req.speed,
             "guidance_scale": guidance_scale,
             "denoise": denoise,
+            "t_shift": t_shift,
         }
 
         if req.mode == "design" and req.instruct:

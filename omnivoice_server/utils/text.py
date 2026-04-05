@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import re
 
+# Split at sentence boundaries: period/exclamation/question followed by space and capital letter
+# Also split at Chinese/Japanese sentence endings
 _SENTENCE_END = re.compile(
-    r"(?<=[.!?])\s+(?=[A-Z\u4e00-\u9fff\u3040-\u30ff"
-    r"\u00C0-\u024F"
-    r"\u1E00-\u1EFF"
-    r"])"
-    r"|(?<=[。！？])",
+    r"(?<=[.!?])\s+(?=[A-Z\u4e00-\u9fff\u3040-\u30ff\u00C0-\u024F\u1E00-\u1EFF])"
+    r"|(?<=[。！？])"
 )
 
+# Patterns that should NOT be treated as sentence boundaries
 _FALSE_ENDS = re.compile(
     r"\d+\.\d+"  # Decimals: 3.14
     r"|v\d+\.\d+"  # Version numbers: v2.1.0
@@ -30,6 +30,7 @@ _FALSE_ENDS = re.compile(
 def split_sentences(text: str, max_chars: int = 400) -> list[str]:
     """
     Split text into sentence-level chunks suitable for streaming.
+    Avoids splitting at false sentence boundaries (decimals, abbreviations, URLs).
     """
     if not text or not text.strip():
         return []
@@ -39,16 +40,42 @@ def split_sentences(text: str, max_chars: int = 400) -> list[str]:
     if len(text) <= max_chars:
         return [text]
 
+    # First split at apparent sentence boundaries
     raw_sentences = _SENTENCE_END.split(text)
     raw_sentences = [s.strip() for s in raw_sentences if s.strip()]
 
     if not raw_sentences:
         return [text]
 
+    # Merge back sentences that were split at false boundaries
+    merged: list[str] = []
+    i = 0
+    while i < len(raw_sentences):
+        current = raw_sentences[i]
+
+        # Check if current sentence ends with a false boundary pattern
+        # If so, merge with next sentence
+        while i + 1 < len(raw_sentences):
+            # Check if the END of current matches a false boundary
+            match = None
+            for m in _FALSE_ENDS.finditer(current):
+                match = m  # Get last match
+
+            # If last match is at the end of the string (within 2 chars), merge
+            if match and match.end() >= len(current) - 2:
+                current = current + " " + raw_sentences[i + 1]
+                i += 1
+            else:
+                break
+
+        merged.append(current)
+        i += 1
+
+    # Now apply max_chars chunking
     chunks: list[str] = []
     current = ""
 
-    for sentence in raw_sentences:
+    for sentence in merged:
         if not current:
             current = sentence
         elif len(current) + 1 + len(sentence) <= max_chars:
