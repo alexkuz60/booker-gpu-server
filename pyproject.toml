@@ -20,13 +20,6 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 
-[project.urls]
-Homepage = "https://github.com/maemreyo/omnivoice-server"
-Documentation = "https://github.com/maemreyo/omnivoice-server#readme"
-Repository = "https://github.com/maemreyo/omnivoice-server"
-Issues = "https://github.com/maemreyo/omnivoice-server/issues"
-Changelog = "https://github.com/maemreyo/omnivoice-server/blob/main/CHANGELOG.md"
-
 dependencies = [
     # FIX: pin omnivoice to a compatible minor series.
     # OmniVoice is brand-new (April 2026) and its API may change in 0.2.x.
@@ -41,6 +34,13 @@ dependencies = [
     "huggingface-hub>=0.26.0",
     "torchaudio>=2.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/maemreyo/omnivoice-server"
+Documentation = "https://github.com/maemreyo/omnivoice-server#readme"
+Repository = "https://github.com/maemreyo/omnivoice-server"
+Issues = "https://github.com/maemreyo/omnivoice-server/issues"
+Changelog = "https://github.com/maemreyo/omnivoice-server/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 benchmark = ["psutil", "tqdm"]
