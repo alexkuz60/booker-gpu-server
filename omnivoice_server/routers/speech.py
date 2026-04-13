@@ -198,6 +198,7 @@ async def _stream_sentences(
             position_temperature=base_req.position_temperature,
             class_temperature=base_req.class_temperature,
             duration=base_req.duration,
+            language=base_req.language,
         )
         try:
             result = await inference_svc.synthesize(req)
@@ -228,6 +229,10 @@ async def create_speech_clone(
     position_temperature: float | None = Form(default=None, ge=0.0, le=10.0),
     class_temperature: float | None = Form(default=None, ge=0.0, le=2.0),
     duration: float | None = Form(default=None, ge=0.1, le=60.0),
+    language: str | None = Form(
+        default=None,
+        description="Language code (e.g., 'en', 'vi', 'zh') for multilingual pronunciation",
+    ),
     inference_svc: InferenceService = Depends(_get_inference),
     metrics_svc: MetricsService = Depends(_get_metrics),
     cfg=Depends(_get_cfg),
@@ -280,6 +285,7 @@ async def create_speech_clone(
             position_temperature=position_temperature,
             class_temperature=class_temperature,
             duration=duration,
+            language=language,
         )
         try:
             result = await inference_svc.synthesize(req)
