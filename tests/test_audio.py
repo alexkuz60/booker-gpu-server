@@ -122,7 +122,8 @@ def test_validate_audio_bytes_empty_audio():
     buf.seek(0)
     audio_bytes = buf.read()
 
-    with pytest.raises(ValueError, match="has 0 frames"):
+    # Different PyTorch versions return different error messages
+    with pytest.raises(ValueError, match="has 0 frames|could not parse"):
         validate_audio_bytes(audio_bytes)
 
 
