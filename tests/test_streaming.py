@@ -12,7 +12,11 @@ def test_streaming_returns_pcm_headers(client):
     """Streaming response must set the PCM metadata headers."""
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": "Hello world. This is sentence two.", "stream": True},
+        json={
+            "input": "Hello world. This is sentence two.",
+            "stream": True,
+            "response_format": "pcm",
+        },
     )
     assert resp.status_code == 200
     assert resp.headers.get("X-Audio-Sample-Rate") == "24000"
@@ -24,7 +28,7 @@ def test_streaming_returns_pcm_headers(client):
 def test_streaming_content_type_is_pcm(client):
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": "Hello.", "stream": True},
+        json={"input": "Hello.", "stream": True, "response_format": "pcm"},
     )
     assert resp.status_code == 200
     assert "audio/pcm" in resp.headers["content-type"]
@@ -34,7 +38,7 @@ def test_streaming_returns_bytes(client):
     """Should yield at least some PCM bytes for non-empty input."""
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": "Hello world.", "stream": True},
+        json={"input": "Hello world.", "stream": True, "response_format": "pcm"},
     )
     assert resp.status_code == 200
     assert len(resp.content) > 0
@@ -50,7 +54,7 @@ def test_streaming_multi_sentence(client):
     text = "First sentence. Second sentence. Third sentence."
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": text, "stream": True},
+        json={"input": text, "stream": True, "response_format": "pcm"},
     )
     assert resp.status_code == 200
     # Short sentences get merged into 1 chunk → 1s silence = 48000 samples × 2 bytes
@@ -61,7 +65,12 @@ def test_streaming_ignores_voice_field(client):
     """Streaming should ignore the voice field and keep working."""
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": "Hello.", "voice": "clone:stream-test", "stream": True},
+        json={
+            "input": "Hello.",
+            "voice": "clone:stream-test",
+            "stream": True,
+            "response_format": "pcm",
+        },
     )
     assert resp.status_code == 200
 
@@ -79,7 +88,12 @@ def test_streaming_nonexistent_profile_not_checked(client):
     """Unknown clone voices should be ignored in streaming mode too."""
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": "Hello.", "voice": "clone:does-not-exist", "stream": True},
+        json={
+            "input": "Hello.",
+            "voice": "clone:does-not-exist",
+            "stream": True,
+            "response_format": "pcm",
+        },
     )
     assert resp.status_code == 200
 
@@ -91,7 +105,7 @@ def test_streaming_does_not_return_wav_header(client):
     """
     resp = client.post(
         "/v1/audio/speech",
-        json={"input": "Hello.", "stream": True},
+        json={"input": "Hello.", "stream": True, "response_format": "pcm"},
     )
     assert resp.status_code == 200
     if len(resp.content) >= 4:

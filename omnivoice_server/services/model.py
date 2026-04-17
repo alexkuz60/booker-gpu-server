@@ -13,6 +13,9 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    import numpy as np
+
 import psutil
 import torch
 
