@@ -5,13 +5,11 @@ All functions are pure (no side effects) and synchronous.
 
 from __future__ import annotations
 
-# FIX: io and torchaudio were imported a second time in the middle of the file,
-# after validate_audio_bytes. Moved all imports to top — single import block.
 import io
 
 import numpy as np
+import soundfile as sf
 import torch
-import torchaudio
 
 SAMPLE_RATE = 24_000
 
@@ -23,19 +21,18 @@ def tensor_to_wav_bytes(tensor: torch.Tensor | np.ndarray) -> bytes:
     # Handle both torch.Tensor and numpy.ndarray (e.g., when running on CUDA)
     if isinstance(tensor, np.ndarray):
         tensor = torch.from_numpy(tensor)
-    cpu_tensor = tensor.cpu()
+    cpu_tensor = tensor.detach().cpu()
     if cpu_tensor.dim() == 1:
         cpu_tensor = cpu_tensor.unsqueeze(0)
 
+    if cpu_tensor.dim() == 2:
+        if cpu_tensor.shape[0] == 1:
+            cpu_tensor = cpu_tensor.squeeze(0)  # (T,) mono
+        else:
+            cpu_tensor = cpu_tensor.T  # (C, T) -> (T, C)
+
     buf = io.BytesIO()
-    torchaudio.save(
-        buf,
-        cpu_tensor,
-        SAMPLE_RATE,
-        format="wav",
-        encoding="PCM_S",
-        bits_per_sample=16,
-    )
+    sf.write(buf, cpu_tensor.numpy(), SAMPLE_RATE, format="WAV", subtype="PCM_16")
     buf.seek(0)
     return buf.read()
 
@@ -64,7 +61,7 @@ def tensor_to_pcm16_bytes(tensor: torch.Tensor | np.ndarray) -> bytes:
     # Handle both torch.Tensor and numpy.ndarray (e.g., when running on CUDA)
     if isinstance(tensor, np.ndarray):
         tensor = torch.from_numpy(tensor)
-    flat = tensor.squeeze(0).cpu()  # (T,)
+    flat = tensor.squeeze(0).detach().cpu()  # (T,)
     return (flat * 32767).clamp(-32768, 32767).to(torch.int16).numpy().tobytes()
 
 
@@ -88,11 +85,11 @@ def validate_audio_bytes(data: bytes, field_name: str = "ref_audio") -> None:
     """
     try:
         buf = io.BytesIO(data)
-        info = torchaudio.info(buf)
-        if info.num_frames == 0:
+        info = sf.info(buf)
+        if info.frames == 0:
             raise ValueError(f"{field_name}: audio file has 0 frames")
-        if info.sample_rate < 8000:
-            raise ValueError(f"{field_name}: sample rate {info.sample_rate}Hz too low (min 8000Hz)")
+        if info.samplerate < 8000:
+            raise ValueError(f"{field_name}: sample rate {info.samplerate}Hz too low (min 8000Hz)")
     except Exception as e:
         if isinstance(e, ValueError):
             raise
