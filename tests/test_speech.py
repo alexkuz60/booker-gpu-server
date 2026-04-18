@@ -84,8 +84,113 @@ def test_full_clone_voice_workflow(client, sample_audio_bytes):
     assert "nonexistent" in resp.json()["error"]["message"]
 
 
+def test_clone_workflow_bare_name_triggers_clone_mode(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "baretest"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    resp = client.post(
+        "/v1/audio/speech",
+        json={"input": "Hello", "voice": "baretest", "response_format": "pcm"},
+    )
+    assert resp.status_code == 200
+    req = client.app.state.inference_svc.synthesize.await_args.args[0]
+    assert req.mode == "clone"
+    assert "baretest" in req.ref_audio_path
+
+
+def test_clone_workflow_case_insensitive_prefix(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "casetest"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    resp = client.post(
+        "/v1/audio/speech",
+        json={"input": "Hello", "voice": "CLONE:casetest", "response_format": "pcm"},
+    )
+    assert resp.status_code == 200
+    req = client.app.state.inference_svc.synthesize.await_args.args[0]
+    assert req.mode == "clone"
+
+
+def test_clone_workflow_after_profile_deleted(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "deleteme"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    client.delete("/v1/voices/profiles/deleteme")
+    resp = client.post(
+        "/v1/audio/speech",
+        json={"input": "Hello", "voice": "clone:deleteme", "response_format": "pcm"},
+    )
+    assert resp.status_code == 404
+
+
+def test_clone_workflow_profile_update(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "updateme"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    client.patch(
+        "/v1/voices/profiles/updateme",
+        data={"ref_text": "Updated text"},
+        files={"ref_audio": ("updated.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    resp = client.post(
+        "/v1/audio/speech",
+        json={"input": "Hello", "voice": "clone:updateme", "response_format": "pcm"},
+    )
+    assert resp.status_code == 200
+    req = client.app.state.inference_svc.synthesize.await_args.args[0]
+    assert req.ref_text == "Updated text"
+
+
+def test_clone_workflow_duplicate_profile_returns_409(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "duplicate"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    resp = client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "duplicate"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    assert resp.status_code == 409
+
+
+def test_clone_workflow_overwrite_true_succeeds(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "overwrite", "overwrite": "true"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    resp = client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "overwrite", "overwrite": "true"},
+        files={"ref_audio": ("ref2.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    assert resp.status_code == 201
+
+
+def test_clone_workflow_empty_profile_list(client):
+    resp = client.get("/v1/voices")
+    assert resp.status_code == 200
+    voices = resp.json()["voices"]
+    clone_voices = [v for v in voices if v.get("type") == "clone"]
+    assert len(clone_voices) == 0
+
+
+def test_clone_workflow_get_nonexistent_profile_returns_404(client):
+    resp = client.get("/v1/voices/profiles/nonexistent")
+    assert resp.status_code == 404
+
+
 def test_speech_auto_uses_default_design_prompt(client):
-    """auto should resolve to the server's default design prompt."""
     resp = client.post(
         "/v1/audio/speech",
         json={
