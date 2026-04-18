@@ -602,11 +602,74 @@ def test_script_single_vs_multi_track_consistency(client):
     assert abs(single_duration - multi_duration) < 0.1
 
 
+def test_script_multi_track_duration_uses_actual_speaker_changes(client):
+    """Multi-track duration should only include pauses on speaker changes."""
+    resp = client.post(
+        "/v1/audio/script",
+        json={
+            "script": [
+                {"speaker": "alice", "text": "Hello world"},
+                {"speaker": "alice", "text": "Still Alice"},
+                {"speaker": "alice", "text": "And again"},
+            ],
+            "output_format": "multi_track",
+            "pause_between_speakers": 1.0,
+        },
+    )
+    assert resp.status_code == 200
+
+    metadata = resp.json()["metadata"]
+    segments = metadata["segments"]
+    expected_duration = segments[-1]["offset_s"] + segments[-1]["duration_s"]
+
+    assert len(segments) == 3
+    assert abs(metadata["total_duration_s"] - expected_duration) < 0.001
+
+
+def test_script_clone_profile_resolved_once_per_speaker(client):
+    """Clone profile paths are resolved once upfront and reused per segment."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    with patch.object(
+        client.app.state.profile_svc,
+        "get_ref_audio_path",
+        return_value=Path("/tmp/alice.wav"),
+    ) as mock_get_ref_audio_path:
+        resp = client.post(
+            "/v1/audio/script",
+            json={
+                "script": [
+                    {"speaker": "alice", "text": "Hello", "voice": "clone:alice"},
+                    {"speaker": "alice", "text": "Again", "voice": "clone:alice"},
+                    {"speaker": "alice", "text": "Third line", "voice": "clone:alice"},
+                ]
+            },
+        )
+
+    assert resp.status_code == 200
+    mock_get_ref_audio_path.assert_called_once_with("alice")
+
+
+def test_script_invalid_openai_preset_returns_422_upfront(client):
+    """Invalid OpenAI presets should be rejected before synthesis begins."""
+    resp = client.post(
+        "/v1/audio/script",
+        json={
+            "script": [
+                {"speaker": "alice", "text": "Hello", "voice": "openai:not-a-real-preset"}
+            ]
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "Invalid OpenAI preset" in resp.text
+
+
 def test_script_malformed_tensor_handling(client):
     """Verify malformed tensor handling via script response path."""
     from unittest.mock import AsyncMock
 
-    import pytest
     import torch
 
     async def _malformed_synthesize(req):
@@ -616,10 +679,11 @@ def test_script_malformed_tensor_handling(client):
     client.app.state.inference_svc.synthesize = AsyncMock(side_effect=_malformed_synthesize)
 
     try:
-        with pytest.raises(ValueError, match="NaN or Inf"):
-            client.post(
-                "/v1/audio/script",
-                json={"script": [{"speaker": "alice", "text": "Hello"}]},
-            )
+        resp = client.post(
+            "/v1/audio/script",
+            json={"script": [{"speaker": "alice", "text": "Hello"}]},
+        )
+        assert resp.status_code == 500
+        assert "NaN or Inf" in resp.text
     finally:
         client.app.state.inference_svc.synthesize = original_synthesize

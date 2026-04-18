@@ -129,6 +129,20 @@ def test_speech_default_voice_uses_default_design_prompt(client):
     assert req.instruct == "male, middle-aged, moderate pitch, british accent"
 
 
+def test_speech_request_timeout_override_is_forwarded(client):
+    """Explicit request timeout should be forwarded to inference."""
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "request_timeout_s": 300,
+            "response_format": "pcm",
+        },
+    )
+    assert resp.status_code == 200
+    assert client.app.state.inference_svc.synthesize.await_args.kwargs == {"timeout_override": 300}
+
+
 def test_speech_design_instructions_field(client):
     """Explicit instructions should drive design mode."""
     resp = client.post(

@@ -49,7 +49,11 @@ TEXT_PRONUNCIATION_EN = (
 TEXT_PRONUNCIATION_ZH = (
     "\u4eca\u5929\u5929\u6c14\u5f88\u597d\u3002{ni3 hao3}\uff0c\u4f60\u597d\u5417\uff1f"
 )
-TEXT_LONG = ("This is a long text designed to trigger audio chunking behavior. " * 6).strip()
+TEXT_LONG = (
+    "This is a long text designed to trigger audio chunking behavior with enough repeated "
+    "content to exceed the chunking threshold and force segmented generation on slower CPU "
+    "setups. " * 8
+).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +198,8 @@ def build_cases(ref_audio_path: str | None) -> list[dict]:
             "body": {
                 "input": TEXT_LONG,
                 "audio_chunk_duration": 15.0,
-                "audio_chunk_threshold": 30.0,
+                "audio_chunk_threshold": 10.0,
+                "request_timeout_s": 300,
             },
             "expect_status": 200,
             "timeout_override": 300,
@@ -559,7 +564,9 @@ def run_case(case: dict, base_url: str, out_dir: Path, timeout: int = 120) -> di
 
     saved_path = None
     if not no_save and resp.status_code == 200:
-        filename = f"{case['id']}_{case['label']}.wav"
+        content_type = resp.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        suffix = ".json" if content_type == "application/json" else ".wav"
+        filename = f"{case['id']}_{case['label']}{suffix}"
         saved_path = str(out_dir / filename)
         with open(saved_path, "wb") as f:
             f.write(resp.content)

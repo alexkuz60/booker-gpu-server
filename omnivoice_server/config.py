@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     )
 
     default_voice: str = Field(
-        default="male, middle-aged, moderate pitch, neutral accent",
+        default="female, british accent",
         description=(
             "Default voice description used when no voice is specified for a speaker. "
             "Deployers can customise this for non-English use cases."

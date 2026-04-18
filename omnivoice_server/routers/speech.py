@@ -62,6 +62,7 @@ class SpeechRequest(BaseModel):
     postprocess_output: bool | None = Field(default=None)
     audio_chunk_duration: float | None = Field(default=None, gt=0.0)
     audio_chunk_threshold: float | None = Field(default=None, gt=0.0)
+    request_timeout_s: int | None = Field(default=None, ge=1, le=600)
 
     @field_validator("model")
     @classmethod
@@ -184,7 +185,10 @@ async def create_speech(
         )
 
     try:
-        result = await inference_svc.synthesize(req)
+        if body.request_timeout_s is not None:
+            result = await inference_svc.synthesize(req, timeout_override=body.request_timeout_s)
+        else:
+            result = await inference_svc.synthesize(req)
         metrics_svc.record_success(result.latency_s)
     except asyncio.TimeoutError:
         metrics_svc.record_timeout()
@@ -294,6 +298,7 @@ async def create_speech_clone(
     postprocess_output: bool | None = Form(default=None),
     audio_chunk_duration: float | None = Form(default=None, gt=0.0),
     audio_chunk_threshold: float | None = Form(default=None, gt=0.0),
+    request_timeout_s: int | None = Form(default=None, ge=1, le=600),
     inference_svc: InferenceService = Depends(_get_inference),
     metrics_svc: MetricsService = Depends(_get_metrics),
     cfg=Depends(_get_cfg),
@@ -354,7 +359,10 @@ async def create_speech_clone(
             audio_chunk_threshold=audio_chunk_threshold,
         )
         try:
-            result = await inference_svc.synthesize(req)
+            if request_timeout_s is not None:
+                result = await inference_svc.synthesize(req, timeout_override=request_timeout_s)
+            else:
+                result = await inference_svc.synthesize(req)
             metrics_svc.record_success(result.latency_s)
         except asyncio.TimeoutError:
             metrics_svc.record_timeout()

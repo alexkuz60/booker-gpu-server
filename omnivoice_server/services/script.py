@@ -12,6 +12,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -51,6 +52,15 @@ class ScriptResult:
     skipped_indices: list[int] = field(default_factory=list)
     timestamps: dict[str, float] = field(default_factory=dict)
     total_latency_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class ResolvedVoice:
+    """Resolved voice information for a speaker."""
+
+    kind: str
+    value: str
+    ref_audio_path: Path | None = None
 
 
 class ScriptMetrics:
@@ -135,8 +145,7 @@ class ScriptOrchestrator:
         self._profiles = profile_service
         self._settings = settings
         self._metrics = ScriptMetrics(metrics_service)
-        self._slot_lock = threading.Lock()
-        self._slot_occupied = False
+        self._slot_lock = asyncio.Lock()
 
     @property
     def script_metrics(self) -> ScriptMetrics:
@@ -157,7 +166,7 @@ class ScriptOrchestrator:
         Raises:
             HTTPException 422 if clone profile not found or OpenAI preset invalid
         """
-        speaker_voices: dict[str, str] = {}
+        speaker_voices: dict[str, ResolvedVoice] = {}
 
         for segment in segments:
             speaker = segment.speaker
@@ -180,33 +189,40 @@ class ScriptOrchestrator:
             if voice.startswith("clone:"):
                 profile_id = voice.split(":", 1)[1]
                 try:
-                    # Validate profile exists
-                    await self._profiles.get_ref_audio_path(profile_id)
+                    ref_audio_path = self._profiles.get_ref_audio_path(profile_id)
                 except ProfileNotFoundError:
                     self._metrics.increment_voice_resolution_failures()
                     raise HTTPException(
                         status_code=422, detail=f"Clone profile not found: {profile_id}"
                     )
+                speaker_voices[speaker] = ResolvedVoice(
+                    kind="clone",
+                    value=profile_id,
+                    ref_audio_path=ref_audio_path,
+                )
+                continue
 
             # Upfront validation for OpenAI presets
-            elif voice.startswith("openai:"):
+            if voice.startswith("openai:"):
                 preset_name = voice.split(":", 1)[1]
-                if preset_name not in OPENAI_VOICE_PRESETS:
+                instruct = OPENAI_VOICE_PRESETS.get(preset_name)
+                if not instruct:
                     self._metrics.increment_voice_resolution_failures()
                     raise HTTPException(
                         status_code=422, detail=f"Invalid OpenAI preset: {preset_name}"
                     )
+                speaker_voices[speaker] = ResolvedVoice(kind="design", value=instruct)
+                continue
 
             # Design voices validated lazily at synthesis time
-
-            speaker_voices[speaker] = voice
+            speaker_voices[speaker] = ResolvedVoice(kind="design", value=voice)
 
         return speaker_voices
 
     async def _build_synthesis_request(
         self,
         text: str,
-        voice: str,
+        voice: ResolvedVoice,
         speed: float | None,
         base_speed: float,
     ) -> SynthesisRequest:
@@ -215,40 +231,23 @@ class ScriptOrchestrator:
         effective_speed = speed if speed is not None else base_speed
 
         # Parse voice type and construct appropriate SynthesisRequest
-        if voice.startswith("clone:"):
-            profile_id = voice.split(":", 1)[1]
-            # Resolve ref_audio_path from profile service
-            ref_audio_path = await self._profiles.get_ref_audio_path(profile_id)
+        if voice.kind == "clone":
             return SynthesisRequest(
                 text=text,
                 mode="clone",
-                ref_audio_path=ref_audio_path,
+                ref_audio_path=voice.ref_audio_path,
                 ref_text=None,  # Optional, not provided in script context
                 speed=effective_speed,
                 num_step=None,  # Use server default
             )
-        elif voice.startswith("openai:"):
-            preset_name = voice.split(":", 1)[1]
-            # Map OpenAI preset to design voice instruction
-            instruct = OPENAI_VOICE_PRESETS.get(preset_name)
-            if not instruct:
-                raise ValueError(f"Invalid OpenAI preset: {preset_name}")
-            return SynthesisRequest(
-                text=text,
-                mode="design",
-                instruct=instruct,
-                speed=effective_speed,
-                num_step=None,  # Use server default
-            )
-        else:
-            # Design voice - voice string is the instruction
-            return SynthesisRequest(
-                text=text,
-                mode="design",
-                instruct=voice,
-                speed=effective_speed,
-                num_step=None,  # Use server default
-            )
+
+        return SynthesisRequest(
+            text=text,
+            mode="design",
+            instruct=voice.value,
+            speed=effective_speed,
+            num_step=None,  # Use server default
+        )
 
     async def _synthesize_segments(
         self,
@@ -262,7 +261,7 @@ class ScriptOrchestrator:
         Synthesize segments with pause insertion and error handling.
 
         Args:
-            segments: List of (speaker, segment) tuples
+            segments: List of script segment inputs
             speaker_voices: Resolved speaker→voice mapping
             base_speed: Base speed from request
             on_error: Error handling strategy ('skip' or 'abort')
@@ -274,7 +273,8 @@ class ScriptOrchestrator:
         result = ScriptResult()
         prev_speaker: str | None = None
 
-        for i, (speaker, segment) in enumerate(segments):
+        for segment in segments:
+            speaker = segment.speaker
             voice = speaker_voices[speaker]
 
             # Insert pause on speaker change
@@ -352,67 +352,66 @@ class ScriptOrchestrator:
         start_time = time.time()
         self._metrics.increment_requests_total()
 
-        with self._slot_lock:
-            if self._slot_occupied:
-                raise HTTPException(
-                    status_code=503, detail="Script synthesis at capacity — try again later"
-                )
-            self._slot_occupied = True
+        if self._slot_lock.locked():
+            raise HTTPException(
+                status_code=503,
+                detail="Script synthesis at capacity — try again later",
+            )
 
         try:
-            # Convert segments to ScriptSegmentInput
-            segments = [
-                ScriptSegmentInput(
-                    index=i,
-                    speaker=seg.speaker,
-                    text=seg.text,
-                    voice=seg.voice,
-                    speed=seg.speed,
+            async with self._slot_lock:
+                # Convert segments to ScriptSegmentInput
+                segments = [
+                    ScriptSegmentInput(
+                        index=i,
+                        speaker=seg.speaker,
+                        text=seg.text,
+                        voice=seg.voice,
+                        speed=seg.speed,
+                    )
+                    for i, seg in enumerate(req.segments)
+                ]
+
+                # Resolve voices upfront
+                resolve_start = time.time()
+                speaker_voices = await self._resolve_voices(
+                    segments=segments,
+                    default_voice=req.default_voice,
                 )
-                for i, seg in enumerate(req.segments)
-            ]
+                resolve_time = time.time() - resolve_start
 
-            # Resolve voices upfront
-            resolve_start = time.time()
-            speaker_voices = await self._resolve_voices(
-                segments=segments,
-                default_voice=req.default_voice,
-            )
-            resolve_time = time.time() - resolve_start
+                # Estimate total duration for memory budget check
+                # Account for effective speed per segment: base_speed and per-segment overrides
+                # Baseline: ~0.08s per char at speed=1.0 (more realistic than 0.05)
+                # Adjust by effective speed: faster speed = shorter duration
+                total_duration_estimate = 0.0
+                for seg in segments:
+                    effective_speed = seg.speed if seg.speed is not None else req.speed
+                    char_count = len(seg.text)
+                    # Duration = (chars * base_rate) / speed
+                    segment_duration = (char_count * 0.08) / effective_speed
+                    total_duration_estimate += segment_duration
 
-            # Estimate total duration for memory budget check
-            # Account for effective speed per segment: base_speed and per-segment overrides
-            # Baseline: ~0.08s per char at speed=1.0 (more realistic than 0.05)
-            # Adjust by effective speed: faster speed = shorter duration
-            total_duration_estimate = 0.0
-            for seg in segments:
-                effective_speed = seg.speed if seg.speed is not None else req.speed
-                char_count = len(seg.text)
-                # Duration = (chars * base_rate) / speed
-                segment_duration = (char_count * 0.08) / effective_speed
-                total_duration_estimate += segment_duration
+                # Add pause contributions: (num_segments - 1) * pause_duration
+                if len(segments) > 1:
+                    pause_duration_s = req.insert_pause_ms / 1000.0
+                    # Worst case: every segment has a different speaker
+                    total_duration_estimate += (len(segments) - 1) * pause_duration_s
 
-            # Add pause contributions: (num_segments - 1) * pause_duration
-            if len(segments) > 1:
-                pause_duration_s = req.insert_pause_ms / 1000.0
-                # Worst case: every segment has a different speaker
-                total_duration_estimate += (len(segments) - 1) * pause_duration_s
+                if total_duration_estimate > MAX_TOTAL_AUDIO_DURATION_S:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Estimated duration {total_duration_estimate:.1f}s "
+                            f"exceeds limit {MAX_TOTAL_AUDIO_DURATION_S}s"
+                        ),
+                    )
 
-            if total_duration_estimate > MAX_TOTAL_AUDIO_DURATION_S:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"Estimated duration {total_duration_estimate:.1f}s "
-                        f"exceeds limit {MAX_TOTAL_AUDIO_DURATION_S}s"
-                    ),
-                )
-
-            # Synthesize segments with total timeout (Python 3.9+ compatible)
-            synthesis_start = time.time()
-            try:
+                # Synthesize segments with total timeout (Python 3.9+ compatible)
+                synthesis_start = time.time()
                 result = await asyncio.wait_for(
                     self._synthesize_segments(
-                        segments=[(seg.speaker, seg) for seg in segments],
+                        segments=segments,
                         speaker_voices=speaker_voices,
                         base_speed=req.speed,
                         on_error=req.on_error,
@@ -420,28 +419,26 @@ class ScriptOrchestrator:
                     ),
                     timeout=SCRIPT_TOTAL_TIMEOUT_S,
                 )
-            except asyncio.TimeoutError:
-                raise
-            synthesis_time = time.time() - synthesis_start
+                synthesis_time = time.time() - synthesis_start
 
-            # Check if all segments failed
-            audio_segments = [s for s in result.synthesized_segments if s["type"] == "audio"]
-            if not audio_segments:
-                raise HTTPException(status_code=422, detail="All segments failed synthesis")
+                # Check if all segments failed
+                audio_segments = [s for s in result.synthesized_segments if s["type"] == "audio"]
+                if not audio_segments:
+                    raise HTTPException(status_code=422, detail="All segments failed synthesis")
 
-            # Record timestamps
-            result.timestamps = {
-                "voice_resolution_s": resolve_time,
-                "synthesis_s": synthesis_time,
-            }
+                # Record timestamps
+                result.timestamps = {
+                    "voice_resolution_s": resolve_time,
+                    "synthesis_s": synthesis_time,
+                }
 
-            # Record total latency
-            total_latency = time.time() - start_time
-            result.total_latency_s = total_latency
-            self._metrics.record_latency(total_latency * 1000)
-            self._metrics.increment_requests_success()
+                # Record total latency
+                total_latency = time.time() - start_time
+                result.total_latency_s = total_latency
+                self._metrics.record_latency(total_latency * 1000)
+                self._metrics.increment_requests_success()
 
-            return result
+                return result
 
         except asyncio.TimeoutError:
             self._metrics.increment_requests_timeout()
@@ -455,6 +452,3 @@ class ScriptOrchestrator:
         except Exception as e:
             self._metrics.increment_requests_error()
             raise HTTPException(status_code=500, detail=f"Script synthesis failed: {str(e)}")
-        finally:
-            with self._slot_lock:
-                self._slot_occupied = False

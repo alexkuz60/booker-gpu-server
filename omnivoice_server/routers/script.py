@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
@@ -146,31 +146,33 @@ async def create_script_audio(
     # Format skipped segments header
     skipped_header = ",".join(map(str, result.skipped_indices)) if result.skipped_indices else ""
 
-    if body.output_format == "single_track":
-        # Mix to single track with pauses
-        mixed_tensor, timestamps = mix_to_single_track(
-            segments_with_tensors, pause_s=body.pause_between_speakers
-        )
+    try:
+        if body.output_format == "single_track":
+            # Mix to single track with pauses
+            mixed_tensor, timestamps = mix_to_single_track(
+                segments_with_tensors, pause_s=body.pause_between_speakers
+            )
 
-        # Convert to requested format
-        audio_bytes, media_type = tensors_to_formatted_bytes([mixed_tensor], body.response_format)
+            # Convert to requested format
+            audio_bytes, media_type = tensors_to_formatted_bytes(
+                [mixed_tensor], body.response_format
+            )
 
-        # Compute total duration
-        total_duration_s = mixed_tensor.shape[-1] / SAMPLE_RATE
+            # Compute total duration
+            total_duration_s = mixed_tensor.shape[-1] / SAMPLE_RATE
 
-        return Response(
-            content=audio_bytes,
-            media_type=media_type,
-            headers={
-                "X-Audio-Duration-S": str(round(total_duration_s, 3)),
-                "X-Synthesis-Latency-S": str(round(result.total_latency_s, 3)),
-                "X-Speakers-Unique": str(unique_speakers),
-                "X-Segment-Count": str(segment_count),
-                "X-Skipped-Segments": skipped_header,
-            },
-        )
+            return Response(
+                content=audio_bytes,
+                media_type=media_type,
+                headers={
+                    "X-Audio-Duration-S": str(round(total_duration_s, 3)),
+                    "X-Synthesis-Latency-S": str(round(result.total_latency_s, 3)),
+                    "X-Speakers-Unique": str(unique_speakers),
+                    "X-Segment-Count": str(segment_count),
+                    "X-Skipped-Segments": skipped_header,
+                },
+            )
 
-    else:  # multi_track
         # Group by speaker
         speaker_tracks = group_by_speaker(segments_with_tensors)
 
@@ -185,10 +187,12 @@ async def create_script_audio(
             segments_with_tensors, pause_s=body.pause_between_speakers
         )
 
-        # Compute total duration
-        total_duration_s = sum(ts.duration_s for ts in timestamps) + body.pause_between_speakers * (
-            len(timestamps) - 1
-        )
+        # Compute total duration from the actual mixed timeline
+        if timestamps:
+            last = timestamps[-1]
+            total_duration_s = last.offset_s + last.duration_s
+        else:
+            total_duration_s = 0.0
 
         return JSONResponse(
             content={
@@ -216,3 +220,5 @@ async def create_script_audio(
                 "X-Skipped-Segments": skipped_header,
             },
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
