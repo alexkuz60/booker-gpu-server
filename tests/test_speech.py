@@ -4,6 +4,7 @@ Tests for speech synthesis endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import shutil
 
@@ -143,6 +144,27 @@ def test_speech_request_timeout_override_is_forwarded(client):
     assert client.app.state.inference_svc.synthesize.await_args.kwargs == {"timeout_override": 300}
 
 
+def test_speech_timeout_override_appears_in_timeout_error(client):
+    """Timeout response should report the effective request override."""
+
+    async def _timeout_synthesize(_req, **_kwargs):
+        raise asyncio.TimeoutError
+
+    client.app.state.inference_svc.synthesize.side_effect = _timeout_synthesize
+
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "request_timeout_s": 300,
+            "response_format": "pcm",
+        },
+    )
+
+    assert resp.status_code == 504
+    assert resp.json()["error"]["message"] == "Synthesis timed out after 300s"
+
+
 def test_speech_design_instructions_field(client):
     """Explicit instructions should drive design mode."""
     resp = client.post(
@@ -177,8 +199,7 @@ def test_speech_instructions_override_voice_design_shorthand(client):
     assert req.instruct == "female,british accent"
 
 
-def test_speech_ignores_clone_voice_when_instructions_missing(client):
-    """clone:* in the voice field should be ignored by /v1/audio/speech."""
+def test_speech_clone_prefix_nonexistent_profile_returns_404(client):
     resp = client.post(
         "/v1/audio/speech",
         json={
@@ -187,10 +208,8 @@ def test_speech_ignores_clone_voice_when_instructions_missing(client):
             "response_format": "pcm",
         },
     )
-    assert resp.status_code == 200
-    req = client.app.state.inference_svc.synthesize.await_args.args[0]
-    assert req.mode == "design"
-    assert req.instruct == "male, middle-aged, moderate pitch, british accent"
+    assert resp.status_code == 404
+    assert "nonexistent" in resp.json()["error"]["message"]
 
 
 def test_speech_ignores_voice_when_instructions_present(client):
@@ -239,13 +258,12 @@ def test_speech_invalid_text_empty(client):
     assert resp.status_code == 422
 
 
-def test_speech_clone_unknown_profile_ignored(client):
-    """clone:* values are ignored by /v1/audio/speech unless cloning endpoint is used."""
+def test_speech_bare_unknown_name_falls_back_to_design(client):
     resp = client.post(
         "/v1/audio/speech",
         json={
             "input": "Hello",
-            "voice": "clone:nonexistent",
+            "voice": "unknownvoicename",
             "response_format": "pcm",
         },
     )

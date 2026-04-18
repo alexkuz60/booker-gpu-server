@@ -278,6 +278,44 @@ def test_script_segment_voice_override(client):
     assert resp.status_code == 200
 
 
+def test_script_segment_voice_override_takes_precedence_over_default_voice(client):
+    """Per-segment voice overrides should still work when a default_voice is provided."""
+    resp = client.post(
+        "/v1/audio/script",
+        json={
+            "script": [
+                {"speaker": "alice", "text": "Hello", "voice": "female, young adult"},
+                {"speaker": "bob", "text": "Hi", "voice": "male, low pitch"},
+            ],
+            "default_voice": "female, british accent",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_script_empty_tensor_returns_explicit_500(client):
+    """Empty synthesis outputs should fail with a clear script-path error."""
+    from unittest.mock import AsyncMock
+
+    import torch
+
+    async def _empty_synthesize(req):
+        return AsyncMock(tensors=[torch.empty(1, 0)], duration_s=0.0)
+
+    original_synthesize = client.app.state.inference_svc.synthesize
+    client.app.state.inference_svc.synthesize = AsyncMock(side_effect=_empty_synthesize)
+
+    try:
+        resp = client.post(
+            "/v1/audio/script",
+            json={"script": [{"speaker": "alice", "text": "Hello"}]},
+        )
+        assert resp.status_code == 500
+        assert "produced empty audio" in resp.text
+    finally:
+        client.app.state.inference_svc.synthesize = original_synthesize
+
+
 def test_script_default_voice_parameter(client):
     """default_voice parameter should be accepted."""
     resp = client.post(
@@ -511,9 +549,11 @@ def test_script_capacity_returns_503_when_slot_occupied(client):
     import time
     from unittest.mock import AsyncMock
 
+    import torch
+
     async def _slow_synthesize(req):
         await asyncio.sleep(0.5)
-        return AsyncMock(tensors=[AsyncMock()], duration_s=1.0)
+        return AsyncMock(tensors=[torch.zeros(1, 24_000)], duration_s=1.0)
 
     original_synthesize = client.app.state.inference_svc.synthesize
     client.app.state.inference_svc.synthesize = AsyncMock(side_effect=_slow_synthesize)
@@ -656,9 +696,7 @@ def test_script_invalid_openai_preset_returns_422_upfront(client):
     resp = client.post(
         "/v1/audio/script",
         json={
-            "script": [
-                {"speaker": "alice", "text": "Hello", "voice": "openai:not-a-real-preset"}
-            ]
+            "script": [{"speaker": "alice", "text": "Hello", "voice": "openai:not-a-real-preset"}]
         },
     )
 

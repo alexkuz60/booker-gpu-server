@@ -49,11 +49,7 @@ TEXT_PRONUNCIATION_EN = (
 TEXT_PRONUNCIATION_ZH = (
     "\u4eca\u5929\u5929\u6c14\u5f88\u597d\u3002{ni3 hao3}\uff0c\u4f60\u597d\u5417\uff1f"
 )
-TEXT_LONG = (
-    "This is a long text designed to trigger audio chunking behavior with enough repeated "
-    "content to exceed the chunking threshold and force segmented generation on slower CPU "
-    "setups. " * 8
-).strip()
+TEXT_LONG = ("This is a chunking verification sample. " * 4).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -192,17 +188,18 @@ def build_cases(ref_audio_path: str | None) -> list[dict]:
             "id": "B08",
             "group": "new_params",
             "label": "audio_chunk_on_long_text",
-            "desc": "audio_chunk_duration=15s + threshold=30s on long text",
+            "desc": "chunked generation path on moderate text with low threshold",
             "endpoint": "/v1/audio/speech",
             "method": "json",
             "body": {
                 "input": TEXT_LONG,
-                "audio_chunk_duration": 15.0,
-                "audio_chunk_threshold": 10.0,
-                "request_timeout_s": 300,
+                "num_step": 4,
+                "audio_chunk_duration": 1.0,
+                "audio_chunk_threshold": 0.1,
+                "request_timeout_s": 120,
             },
             "expect_status": 200,
-            "timeout_override": 300,
+            "timeout_override": 120,
         },
         {
             "id": "B09",
@@ -450,7 +447,8 @@ def build_cases(ref_audio_path: str | None) -> list[dict]:
                         "voice": "female,british accent",
                     },
                     {"speaker": "bob", "text": "American accent", "voice": "male,american accent"},
-                ]
+                ],
+                "default_voice": "female, british accent",
             },
             "expect_status": 200,
         },

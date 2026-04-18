@@ -298,6 +298,13 @@ class ScriptOrchestrator:
 
             try:
                 synthesis_result = await self._inference.synthesize(req)
+                if not synthesis_result.tensors or any(
+                    t.numel() == 0 for t in synthesis_result.tensors
+                ):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Segment {segment.index} produced empty audio",
+                    )
                 audio_tensor = torch.cat(synthesis_result.tensors, dim=-1)
 
                 result.synthesized_segments.append(

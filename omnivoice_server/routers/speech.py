@@ -88,6 +88,10 @@ def _get_cfg(request: Request):
     return request.app.state.cfg
 
 
+def _effective_timeout_s(request_timeout_s: int | None, cfg) -> int:
+    return request_timeout_s or cfg.request_timeout_s
+
+
 def _resolve_synthesis_mode(
     body: SpeechRequest,
     profile_svc: ProfileService,
@@ -99,14 +103,23 @@ def _resolve_synthesis_mode(
     profile_to_check = speaker_raw or voice_raw
     if profile_to_check:
         profile_id = profile_to_check
-        if profile_id.lower().startswith("clone:"):
+        explicit_clone = profile_id.lower().startswith("clone:")
+        if explicit_clone:
             profile_id = profile_id.split(":", 1)[1]
         try:
             ref_audio_path = profile_svc.get_ref_audio_path(profile_id)
             ref_text = profile_svc.get_ref_text(profile_id)
             return "clone", None, str(ref_audio_path), ref_text
         except ProfileNotFoundError:
-            pass
+            if explicit_clone:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Voice profile '{profile_id}' not found. "
+                    "Create it via POST /v1/audio/voices/profiles first.",
+                )
+            logger.debug(f"Profile '{profile_id}' not found; falling back to design/preset mode")
+            # Implicit profile lookup (bare name): fall through to design/preset resolution.
+            logger.debug(f"Profile '{profile_id}' not found; falling back to design/preset mode")
 
     if body.instructions is not None:
         try:
@@ -184,6 +197,8 @@ async def create_speech(
             },
         )
 
+    timeout_s = _effective_timeout_s(body.request_timeout_s, cfg)
+
     try:
         if body.request_timeout_s is not None:
             result = await inference_svc.synthesize(req, timeout_override=body.request_timeout_s)
@@ -194,7 +209,7 @@ async def create_speech(
         metrics_svc.record_timeout()
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Synthesis timed out after {cfg.request_timeout_s}s",
+            detail=f"Synthesis timed out after {timeout_s}s",
         )
     except Exception as e:
         metrics_svc.record_error()
@@ -358,6 +373,8 @@ async def create_speech_clone(
             audio_chunk_duration=audio_chunk_duration,
             audio_chunk_threshold=audio_chunk_threshold,
         )
+        timeout_s = _effective_timeout_s(request_timeout_s, cfg)
+
         try:
             if request_timeout_s is not None:
                 result = await inference_svc.synthesize(req, timeout_override=request_timeout_s)
@@ -368,7 +385,7 @@ async def create_speech_clone(
             metrics_svc.record_timeout()
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=f"Synthesis timed out after {cfg.request_timeout_s}s",
+                detail=f"Synthesis timed out after {timeout_s}s",
             )
         except Exception as e:
             metrics_svc.record_error()
