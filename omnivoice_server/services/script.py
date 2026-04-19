@@ -22,7 +22,11 @@ from omnivoice_server.config import Settings
 from omnivoice_server.services.inference import InferenceService, SynthesisRequest
 from omnivoice_server.services.metrics import MetricsService
 from omnivoice_server.services.profiles import ProfileNotFoundError, ProfileService
-from omnivoice_server.voice_presets import OPENAI_VOICE_PRESETS
+from omnivoice_server.utils.instruction_validation import (
+    InstructionValidationError,
+    validate_and_canonicalize_instructions,
+)
+from omnivoice_server.voice_presets import get_openai_voice_preset
 
 # Constants
 MAX_SCRIPT_SEGMENTS = 100
@@ -166,32 +170,51 @@ class ScriptOrchestrator:
         Raises:
             HTTPException 422 if clone profile not found or OpenAI preset invalid
         """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        _logger.debug(
+            f"[TRACE] _resolve_voices called: {len(segments)} segments, default_voice={default_voice!r}"
+        )
         speaker_voices: dict[str, ResolvedVoice] = {}
 
         for segment in segments:
             speaker = segment.speaker
+            _logger.debug(
+                f"[TRACE] Processing segment index={segment.index}, speaker={speaker!r}, voice={segment.voice!r}"
+            )
 
             # Skip if already resolved
             if speaker in speaker_voices:
+                _logger.debug(f"[TRACE] Speaker {speaker!r} already resolved, skipping")
                 continue
 
             # Explicit voice on segment
             if segment.voice:
                 voice = segment.voice
+                _logger.debug(f"[TRACE] Using explicit voice from segment: {voice!r}")
             # Inherit from default
             elif default_voice:
                 voice = default_voice
+                _logger.debug(f"[TRACE] Using default_voice: {voice!r}")
             # Fall back to system default
             else:
                 voice = self._settings.default_voice
+                _logger.debug(f"[TRACE] Using system default voice: {voice!r}")
 
             # Upfront validation for clone profiles
             if voice.startswith("clone:"):
                 profile_id = voice.split(":", 1)[1]
+                _logger.info(f"[TRACE] Clone voice detected: profile_id={profile_id!r}")
                 try:
                     ref_audio_path = self._profiles.get_ref_audio_path(profile_id)
+                    _logger.info(
+                        f"[TRACE] Clone profile found: {profile_id!r} -> ref_audio={ref_audio_path}"
+                    )
                 except ProfileNotFoundError:
                     self._metrics.increment_voice_resolution_failures()
+                    _logger.error(f"[TRACE] Clone profile NOT FOUND: {profile_id!r}")
                     raise HTTPException(
                         status_code=422, detail=f"Clone profile not found: {profile_id}"
                     )
@@ -200,23 +223,62 @@ class ScriptOrchestrator:
                     value=profile_id,
                     ref_audio_path=ref_audio_path,
                 )
+                _logger.info(
+                    f"[TRACE] Speaker {speaker!r} resolved to clone profile {profile_id!r}"
+                )
                 continue
 
             # Upfront validation for OpenAI presets
             if voice.startswith("openai:"):
                 preset_name = voice.split(":", 1)[1]
-                instruct = OPENAI_VOICE_PRESETS.get(preset_name)
+                instruct = get_openai_voice_preset(preset_name)
                 if not instruct:
                     self._metrics.increment_voice_resolution_failures()
                     raise HTTPException(
                         status_code=422, detail=f"Invalid OpenAI preset: {preset_name}"
                     )
                 speaker_voices[speaker] = ResolvedVoice(kind="design", value=instruct)
+                _logger.info(
+                    f"[TRACE] Speaker {speaker!r} resolved to OpenAI preset {preset_name!r}"
+                )
                 continue
 
-            # Design voices validated lazily at synthesis time
-            speaker_voices[speaker] = ResolvedVoice(kind="design", value=voice)
+            bare_preset = get_openai_voice_preset(voice)
+            if bare_preset:
+                speaker_voices[speaker] = ResolvedVoice(kind="design", value=bare_preset)
+                _logger.info(
+                    f"[TRACE] Speaker {speaker!r} resolved to bare OpenAI preset {voice!r} -> {bare_preset}"
+                )
+                continue
 
+            try:
+                canonicalized = validate_and_canonicalize_instructions(voice)
+            except InstructionValidationError as exc:
+                self._metrics.increment_voice_resolution_failures()
+                _logger.warning(
+                    f"[TRACE] Unsupported script voice for speaker {speaker!r}: {voice!r}"
+                )
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Unsupported voice value '{voice}' for speaker '{speaker}'. "
+                        "Use a known preset, openai:<preset>, clone:<profile_id>, or supported design attributes."
+                    ),
+                ) from exc
+
+            # Design voices validated lazily at synthesis time
+            speaker_voices[speaker] = ResolvedVoice(kind="design", value=canonicalized)
+            _logger.info(
+                f"[TRACE] Speaker {speaker!r} resolved to design voice: {voice!r} -> {canonicalized!r}"
+            )
+
+        _logger.info(
+            f"[TRACE] _resolve_voices completed: {len(speaker_voices)} unique speakers resolved"
+        )
+        for spk, rv in speaker_voices.items():
+            _logger.info(
+                f"  - {spk!r}: kind={rv.kind}, value={rv.value!r}, ref_audio_path={rv.ref_audio_path}"
+            )
         return speaker_voices
 
     async def _build_synthesis_request(
@@ -235,7 +297,7 @@ class ScriptOrchestrator:
             return SynthesisRequest(
                 text=text,
                 mode="clone",
-                ref_audio_path=voice.ref_audio_path,
+                ref_audio_path=str(voice.ref_audio_path),
                 ref_text=None,  # Optional, not provided in script context
                 speed=effective_speed,
                 num_step=None,  # Use server default

@@ -29,7 +29,11 @@ from ..utils.instruction_validation import (
     validate_and_canonicalize_instructions,
 )
 from ..utils.text import split_sentences
-from ..voice_presets import DEFAULT_DESIGN_INSTRUCTIONS, OPENAI_VOICE_PRESETS
+from ..voice_presets import (
+    DEFAULT_DESIGN_INSTRUCTIONS,
+    get_openai_voice_preset,
+    is_openai_voice_preset,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -97,8 +101,49 @@ def _resolve_synthesis_mode(
     profile_svc: ProfileService,
 ) -> tuple[str, str | None, str | None, str | None]:
     """Resolve synthesis mode for /v1/audio/speech."""
+    logger.debug(
+        f"[TRACE] _resolve_synthesis_mode called: speaker={body.speaker!r}, voice={body.voice!r}, instructions={body.instructions!r}"
+    )
     speaker_raw = body.speaker.strip() if body.speaker else None
     voice_raw = body.voice.strip() if body.voice else None
+
+    speaker_key = speaker_raw.strip().lower() if speaker_raw else None
+    voice_key = voice_raw.strip().lower() if voice_raw else None
+
+    speaker_preset = get_openai_voice_preset(speaker_key)
+    voice_preset = get_openai_voice_preset(voice_key)
+
+    if speaker_raw and voice_raw:
+        speaker_clone = speaker_raw.lower().startswith("clone:")
+        voice_clone = voice_raw.lower().startswith("clone:")
+        if speaker_clone != voice_clone:
+            logger.warning(
+                "[TRACE] Ambiguous voice request: speaker=%r voice=%r mix clone/non-clone semantics",
+                body.speaker,
+                body.voice,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Ambiguous request: `speaker` and `voice` use different resolution modes. "
+                    "Use only one field, or make both refer to the same clone/preset choice."
+                ),
+            )
+        if speaker_preset and voice_preset and speaker_preset != voice_preset:
+            logger.warning(
+                "[TRACE] Ambiguous preset request: speaker=%r -> %r, voice=%r -> %r",
+                body.speaker,
+                speaker_preset,
+                body.voice,
+                voice_preset,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Ambiguous request: `speaker` and `voice` resolve to different preset voices. "
+                    "Use only one field."
+                ),
+            )
 
     profile_to_check = speaker_raw or voice_raw
     if profile_to_check:
@@ -106,38 +151,92 @@ def _resolve_synthesis_mode(
         explicit_clone = profile_id.lower().startswith("clone:")
         if explicit_clone:
             profile_id = profile_id.split(":", 1)[1]
+            logger.debug(f"[TRACE] clone: prefix detected, extracted profile_id={profile_id!r}")
         try:
             ref_audio_path = profile_svc.get_ref_audio_path(profile_id)
             ref_text = profile_svc.get_ref_text(profile_id)
+            logger.info(
+                f"[TRACE] Resolved to CLONE mode: profile_id={profile_id!r}, ref_audio={ref_audio_path}"
+            )
             return "clone", None, str(ref_audio_path), ref_text
         except ProfileNotFoundError:
             if explicit_clone:
+                logger.warning(f"[TRACE] Clone profile not found: {profile_id!r}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Voice profile '{profile_id}' not found. "
                     "Create it via POST /v1/audio/voices/profiles first.",
                 )
-            logger.debug(f"Profile '{profile_id}' not found; falling back to design/preset mode")
+            logger.debug(
+                f"[TRACE] Profile '{profile_id}' not found; falling back to design/preset mode"
+            )
+
+    if speaker_raw and not speaker_preset and not speaker_raw.lower().startswith("clone:"):
+        logger.warning(
+            "[TRACE] Unrecognized speaker field value=%r; speaker is reserved for preset/clone compatibility",
+            body.speaker,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Unsupported speaker value '{body.speaker}'. Use a known preset, clone:<profile_id>, "
+                "or omit `speaker` and use `voice`/`instructions`."
+            ),
+        )
 
     if body.instructions is not None:
         try:
             canonicalized = validate_and_canonicalize_instructions(body.instructions)
+            logger.info(f"[TRACE] Resolved to DESIGN mode (instructions): {canonicalized}")
             return "design", canonicalized, None, None
         except InstructionValidationError as e:
             raise HTTPException(
-                status_code=422,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(e),
             )
 
-    speaker_key = speaker_raw.strip().lower() if speaker_raw else None
-    voice_key = voice_raw.strip().lower() if voice_raw else None
+    if speaker_preset:
+        preset_instruct = speaker_preset
+        logger.info(
+            f"[TRACE] Resolved to DESIGN mode (speaker preset): speaker={speaker_key!r} -> {preset_instruct}"
+        )
+        return "design", preset_instruct, None, None
 
-    if speaker_key and speaker_key in OPENAI_VOICE_PRESETS:
-        return "design", OPENAI_VOICE_PRESETS[speaker_key], None, None
+    if voice_preset:
+        preset_instruct = voice_preset
+        logger.info(
+            f"[TRACE] Resolved to DESIGN mode (voice preset): voice={voice_key!r} -> {preset_instruct}"
+        )
+        return "design", preset_instruct, None, None
 
-    if voice_key and voice_key in OPENAI_VOICE_PRESETS:
-        return "design", OPENAI_VOICE_PRESETS[voice_key], None, None
+    if voice_raw:
+        design_voice = voice_raw
+        if voice_raw.lower().startswith("design:"):
+            design_voice = voice_raw.split(":", 1)[1]
+        try:
+            canonicalized = validate_and_canonicalize_instructions(design_voice)
+            logger.info(f"[TRACE] Resolved to DESIGN mode (voice instructions): {canonicalized}")
+            return "design", canonicalized, None, None
+        except InstructionValidationError as e:
+            if voice_raw.lower() == "auto":
+                logger.info(
+                    f"[TRACE] Resolved to DESIGN mode (default): {DEFAULT_DESIGN_INSTRUCTIONS}"
+                )
+                return "design", DEFAULT_DESIGN_INSTRUCTIONS, None, None
+            if not is_openai_voice_preset(voice_raw):
+                logger.warning(
+                    "[TRACE] Unsupported voice value=%r; rejecting instead of silent fallback",
+                    body.voice,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Unsupported voice value '{body.voice}'. Use a known preset, clone:<profile_id>, "
+                        "or supported design attributes from /v1/voices."
+                    ),
+                ) from e
 
+    logger.info(f"[TRACE] Resolved to DESIGN mode (default): {DEFAULT_DESIGN_INSTRUCTIONS}")
     return "design", DEFAULT_DESIGN_INSTRUCTIONS, None, None
 
 

@@ -27,7 +27,7 @@ def test_speech_default_returns_wav(client):
 
 
 def test_speech_design_voice(client):
-    """voice field should be ignored for /v1/audio/speech."""
+    """design: voice values should map to explicit design instructions."""
     resp = client.post(
         "/v1/audio/speech",
         json={
@@ -39,7 +39,7 @@ def test_speech_design_voice(client):
     assert resp.status_code == 200
     req = client.app.state.inference_svc.synthesize.await_args.args[0]
     assert req.mode == "design"
-    assert req.instruct == "male, middle-aged, moderate pitch, british accent"
+    assert req.instruct == "female,british accent"
 
 
 def test_full_clone_voice_workflow(client, sample_audio_bytes):
@@ -351,8 +351,7 @@ def test_speech_ignores_voice_when_instructions_present(client):
     assert req.instruct == "female,british accent"
 
 
-def test_speech_speaker_takes_precedence_over_voice_preset(client):
-    """speaker should win when both preset selectors are provided."""
+def test_speech_conflicting_speaker_and_voice_presets_return_422(client):
     resp = client.post(
         "/v1/audio/speech",
         json={
@@ -362,10 +361,8 @@ def test_speech_speaker_takes_precedence_over_voice_preset(client):
             "response_format": "pcm",
         },
     )
-    assert resp.status_code == 200
-    req = client.app.state.inference_svc.synthesize.await_args.args[0]
-    assert req.mode == "design"
-    assert req.instruct == "male, middle-aged, low pitch, american accent"
+    assert resp.status_code == 422
+    assert "Ambiguous request" in resp.text
 
 
 def test_speech_invalid_text_empty(client):
@@ -380,7 +377,7 @@ def test_speech_invalid_text_empty(client):
     assert resp.status_code == 422
 
 
-def test_speech_bare_unknown_name_falls_back_to_design(client):
+def test_speech_bare_unknown_name_returns_422(client):
     resp = client.post(
         "/v1/audio/speech",
         json={
@@ -389,10 +386,40 @@ def test_speech_bare_unknown_name_falls_back_to_design(client):
             "response_format": "pcm",
         },
     )
-    assert resp.status_code == 200
-    req = client.app.state.inference_svc.synthesize.await_args.args[0]
-    assert req.mode == "design"
-    assert req.instruct == "male, middle-aged, moderate pitch, british accent"
+    assert resp.status_code == 422
+    assert "Unsupported voice value" in resp.text
+
+
+def test_speech_unknown_speaker_value_returns_422(client):
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "speaker": "narrator_1",
+            "response_format": "pcm",
+        },
+    )
+    assert resp.status_code == 422
+    assert "Unsupported speaker value" in resp.text
+
+
+def test_speech_conflicting_clone_and_preset_fields_return_422(client, sample_audio_bytes):
+    client.post(
+        "/v1/voices/profiles",
+        data={"profile_id": "alice"},
+        files={"ref_audio": ("ref.wav", io.BytesIO(sample_audio_bytes), "audio/wav")},
+    )
+    resp = client.post(
+        "/v1/audio/speech",
+        json={
+            "input": "Hello",
+            "speaker": "clone:alice",
+            "voice": "alloy",
+            "response_format": "pcm",
+        },
+    )
+    assert resp.status_code == 422
+    assert "Ambiguous request" in resp.text
 
 
 def test_speech_openai_model_names_accepted(client):

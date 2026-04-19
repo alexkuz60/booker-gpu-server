@@ -271,7 +271,7 @@ def test_script_segment_voice_override(client):
         json={
             "script": [
                 {"speaker": "alice", "text": "Hello", "voice": "female, young adult"},
-                {"speaker": "bob", "text": "Hi", "voice": "male, deep voice"},
+                {"speaker": "bob", "text": "Hi", "voice": "male, very low pitch"},
             ],
         },
     )
@@ -702,6 +702,32 @@ def test_script_invalid_openai_preset_returns_422_upfront(client):
 
     assert resp.status_code == 422
     assert "Invalid OpenAI preset" in resp.text
+
+
+def test_script_bare_openai_preset_name_maps_upfront(client):
+    resp = client.post(
+        "/v1/audio/script",
+        json={
+            "script": [{"speaker": "alice", "text": "Hello", "voice": "ash"}],
+        },
+    )
+
+    assert resp.status_code == 200
+    req = client.app.state.inference_svc.synthesize.await_args.args[0]
+    assert req.mode == "design"
+    assert req.instruct == "male, young adult, low pitch, american accent"
+
+
+def test_script_invalid_bare_voice_name_returns_422(client):
+    resp = client.post(
+        "/v1/audio/script",
+        json={
+            "script": [{"speaker": "alice", "text": "Hello", "voice": "unknownvoicename"}],
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "Unsupported voice value" in resp.text
 
 
 def test_script_malformed_tensor_handling(client):

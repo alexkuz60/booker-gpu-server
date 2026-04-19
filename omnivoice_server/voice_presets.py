@@ -22,6 +22,17 @@ OPENAI_VOICE_PRESETS = {
     "verse": "male, young adult, moderate pitch, british accent",
 }
 
+
+def get_openai_voice_preset(name: str | None) -> str | None:
+    if name is None:
+        return None
+    return OPENAI_VOICE_PRESETS.get(name.strip().lower())
+
+
+def is_openai_voice_preset(name: str | None) -> bool:
+    return get_openai_voice_preset(name) is not None
+
+
 DESIGN_ATTRIBUTES = {
     "gender": ["male", "female"],
     "age": ["child", "teenager", "young adult", "middle-aged", "elderly"],

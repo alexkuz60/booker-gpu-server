@@ -74,6 +74,13 @@ class OmniVoiceAdapter:
 
     def build_kwargs(self, req: SynthesisRequest, model) -> dict:
         """Return kwargs dict ready to pass to model.generate()."""
+        logger.debug(
+            f"[TRACE] OmniVoiceAdapter.build_kwargs called: mode={req.mode!r}, "
+            f"text={req.text[:50]!r}..., instruct={req.instruct!r}, "
+            f"ref_audio_path={req.ref_audio_path!r}, ref_text={req.ref_text!r}, "
+            f"speed={req.speed}, num_step={req.num_step}, guidance_scale={req.guidance_scale}, "
+            f"denoise={req.denoise}, language={req.language}"
+        )
         num_step = req.num_step or self._cfg.num_step
         guidance_scale = (
             req.guidance_scale if req.guidance_scale is not None else self._cfg.guidance_scale
@@ -122,11 +129,18 @@ class OmniVoiceAdapter:
 
         if req.mode == "design" and req.instruct:
             kwargs["instruct"] = req.instruct
+            logger.info(f"[TRACE] DESIGN mode kwargs prepared: instruct={req.instruct!r}")
         elif req.mode == "clone" and req.ref_audio_path:
             kwargs["ref_audio"] = req.ref_audio_path
             if req.ref_text:
                 kwargs["ref_text"] = req.ref_text
+            logger.info(
+                f"[TRACE] CLONE mode kwargs prepared: ref_audio={req.ref_audio_path}, ref_text={req.ref_text!r}"
+            )
+        else:
+            logger.warning(f"[TRACE] Unknown/unsupported mode: {req.mode!r}")
 
+        logger.debug(f"[TRACE] Final kwargs keys: {list(kwargs.keys())}")
         return kwargs
 
     def call(self, req: SynthesisRequest, model) -> list[torch.Tensor]:
