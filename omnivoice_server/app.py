@@ -16,10 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import Settings
-from .routers import health, models, script, speech, voices
+from .routers import health, health_extended, models, script, speech, voices
+
 from .services.inference import InferenceService
 from .services.metrics import MetricsService
 from .services.model import ModelService
+from .services.model_pool import ModelPool, ModelSlot
 from .services.profiles import ProfileService
 from .services.script import ScriptOrchestrator
 
@@ -42,6 +44,26 @@ async def lifespan(app: FastAPI):
     model_svc = ModelService(cfg)
     await model_svc.load()
     app.state.model_svc = model_svc
+
+    # ── Model pool (Sprint 0: single slot wrapping ModelService) ─────────────
+    try:
+        dtype_str = str(next(iter(model_svc.model.parameters())).dtype).replace("torch.", "")
+    except Exception:
+        dtype_str = "unknown"  # tests / mocked model
+
+    pool = ModelPool()
+    pool.register(
+        ModelSlot(
+            name="omnivoice",
+            engine="omnivoice",
+            model_id=cfg.model_id,
+            device=cfg.device,
+            dtype=dtype_str,
+            loaded_at=time.monotonic(),
+            ref=model_svc,
+        )
+    )
+    app.state.model_pool = pool
 
     executor = ThreadPoolExecutor(
         max_workers=cfg.max_concurrent,
@@ -193,6 +215,7 @@ def create_app(cfg: Settings) -> FastAPI:
     app.include_router(voices.router, prefix="/v1")
     app.include_router(models.router, prefix="/v1")
     app.include_router(script.router, prefix="/v1")
+    app.include_router(health_extended.router, prefix="/v1")  # ← NEW
     app.include_router(health.router)
 
     return app
