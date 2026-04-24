@@ -1,152 +1,68 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+Формат: [Keep a Changelog](https://keepachangelog.com/), версионирование по спринтам (`spX.dayY`).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased] — Sprint 1 Day 6-7
 
-## [0.2.2] - 2026-04-20
+### Planned
+- Day 6: клиентская интеграция в AI-Booker (`useOmniVoiceServer.ts`, кнопки в `VoiceReferenceManager`, `VoiceConversionTab`, Atmo Studio, MicRecorder)
+- Day 7: эндпоинт `/v1/health/extended` (GPU/VRAM через `pynvml` + `loaded_models[]`); полировка; доки
+
+---
+
+## [sp1.day2-5] — 2026-04-24 — DeepFilterNet3 production-ready
+
+Commit: `d7d75cb` (push в `origin/main`).
 
 ### Added
-
-- Configurable CORS support with auth interoperability ([#24](https://github.com/maemreyo/omnivoice-server/issues/24))
-  - Support for multiple origins via `CORS_ORIGINS` env var
-  - Pre-flight OPTIONS handling with proper `Access-Control-Allow-Credentials`
-  - Seamless integration with Bearer token authentication
-
-### Fixed
-
-- Voice cloning: strict validation for profile existence
-  - Returns **HTTP 404** with clear error when `clone:<profile>` prefix used but profile not found ([#22](https://github.com/maemreyo/omnivoice-server/issues/22))
-- `voice`/`speaker` field now correctly resolves to cloned profile when matching profile exists ([#22](https://github.com/maemreyo/omnivoice-server/issues/22))
-- `profile_id` parameter in clone synthesis now respects explicitly passed profile IDs
-- Windows torchcodec compatibility troubleshooting guide added to documentation
+- `omnivoice_server/locks.py` — глобальный `MODEL_LOCK = asyncio.Lock()` (монопольный GPU)
+- `omnivoice_server/services/denoise.py` — singleton `DenoiseService`, lazy init, 5-мин idle release, 3 пресета (light/med/strong), server-side resample через `soxr`
+- `omnivoice_server/routers/denoise.py` — `POST /v1/audio/denoise` (multipart + query: `preset`, `sample_rate`, `atten_lim_db`)
+  - Response headers: `X-Snr-Improvement-Db`, `X-Processing-Ms`, `X-Output-Sample-Rate`, `X-Preset-Used`
+- `tests/test_denoise.py` — 8/8 passed (3 пресета, unknown preset 422, resample 24kHz, atten override, empty upload, presets constant)
+- `scripts/apply_sprint1.sh` — idempotent патч-скрипт
+- `pyproject.toml` — `[tool.pytest.ini_options] asyncio_mode = "auto"`
 
 ### Changed
+- `services/inference.py.synthesize()` — обёрнут в `async with MODEL_LOCK` (TTS speech/clone/script все защищены)
+- `app.py` — зарегистрирован `denoise router`
 
-- Dependency constraints updated in pyproject.toml for better platform compatibility
+### Architectural
+- Зафиксирован принцип concurrency: денойз НЕ параллелится с TTS (все три сценария применения денойза в Booker — sequential pre/post-processing). Решено в пользу простоты и предсказуемых латенси.
 
-### Technical
+---
 
-- CI: resolved mypy and ruff lint errors
-- Tests: updated voice validation assertions to match current behavior
-
-## [0.2.1] - 2026-04-18
-
-### Added
-
-- Multi-speaker script synthesis endpoint (`POST /v1/audio/script`) for generating audio from multi-speaker scripts
-
-### Fixed
-
-- Voice cloning silently falling back to random/auto voice when using `clone:<profile>` prefix ([#22](https://github.com/maemreyo/omnivoice-server/issues/22))
-  - Now returns **HTTP 404** with clear error message when profile is not found
-- `voice`/`speaker` field in `/v1/audio/speech` now correctly resolves to cloned profile when a matching profile exists ([#22](https://github.com/maemreyo/omnivoice-server/issues/22))
-- `profile_id` parameter in clone synthesis respects explicitly passed profile IDs
-- Defensive tensor validation in script audio mixing to prevent runtime crashes
-- Script endpoint validation and runtime failure path hardening
-- Python 3.9 compatibility: replaced `asyncio.timeout` with `asyncio.wait_for`
-
-## [0.2.0] - 2026-04-17
+## [sp1.day1] — 2026-04-24 — DeepFilterNet3 smoke-test
 
 ### Added
+- Rust 1.95.0 (rustup) — нужен для сборки `deepfilterlib==0.5.6` (нет cp312 wheels на PyPI)
+- `pip install deepfilternet soxr` — успешно
+- Калибровка пресетов на слух:
+  - `atmo_light` → `atten_lim_db=10`
+  - `microphone_med` → `atten_lim_db=15`
+  - `voice_reference_strong` → `atten_lim_db=30`
 
-- New upstream generation parameters exposed on `/v1/audio/speech` and `/v1/audio/speech/clone`:
-  - `layer_penalty_factor` (float, ≥0.0) — Layer penalty scaling factor
-  - `preprocess_prompt` (bool) — Enable prompt preprocessing
-  - `postprocess_output` (bool) — Enable output postprocessing (trailing silence removal)
-  - `audio_chunk_duration` (float, >0.0) — Audio chunk duration threshold
-  - `audio_chunk_threshold` (float, >0.0) — Audio chunk length threshold
-- Instruction validation and canonicalization with upstream-aligned attribute allowlists
-- Accent alias short-form expansion (e.g., `british` → `british accent`, `american` → `american accent`)
-- `/v1/voices` metadata now includes `design_attributes` with canonical supported categories
-- QA script (`scripts/generate_qa_samples.py`) covering baseline, new params, instruction validation, and non-verbal pass-through
+### Verified
+- DFNet cold start: 5.7s
+- DFNet VRAM idle: 9 MB
+- DFNet realtime: 18.2× на A4000
+- Auto-resample 24→48 kHz внутри DFNet работает
 
-### Fixed
+---
 
-- Reject invalid or conflicting `instructions` (duplicate gender, unsupported emotion/style, empty string)
-- `/v1/audio/speech/clone` now parity-aligned with generation parameters
+## [sp0] — 2026-04-24 — Базовый форк
 
-### Changed
-
-- Default device changed from `cuda` to `cpu` due to Apple Silicon MPS issues (see `docs/verification/MPS_ISSUE.md`)
-
-## [0.1.2] - 2026-04-17
+Базовый форк `omnivoice-server` собран и проверен на RTX A4000 (16 GB).
 
 ### Added
+- Endpoints: `/health`, `/metrics`, `/v1/audio/speech`, `/v1/audio/speech/clone`, `/v1/audio/script`, `/v1/voices`, `/v1/voices/profiles`, `/v1/models`, `/v1/models/{id}`
 
-- Expanded `response_format` support to all 6 OpenAI API formats: `mp3`, `opus`, `aac`, `flac`, `wav`, `pcm` ([#16](https://github.com/maemreyo/omnivoice-server/issues/16))
-- Optional `pydub` dependency for format conversion (`pip install omnivoice-server[formats]`)
-- Added runtime error handling with 501 Not Implemented when format conversion fails (missing pydub/ffmpeg)
-- Test coverage for both `PYDUB_AVAILABLE=False` and `FFMPEG_AVAILABLE=False` scenarios
+### Verified
+- 212/212 тестов passed (1m43s)
+- OmniVoice холодный старт: 7.3s (~2.2 GB VRAM)
+- TTS латенси: ~1.1s на 5.76s аудио (5.2× realtime)
+- VRAM в простое: ~2.97 GB; пик при синтезе: +16 MiB
+- Output: WAV PCM 16-bit mono **24 kHz** (нативный для OmniVoice)
 
-### Fixed
-
-- Fixed BytesIO handling: replaced `torchaudio.save()` with `soundfile.write()` for WAV generation ([#15](https://github.com/maemreyo/omnivoice-server/issues/15))
-- Fixed Opus MIME type: changed from incorrect `audio/opus` to `audio/ogg` (FFmpeg wraps Opus in Ogg container)
-- Fixed `FFMPEG_AVAILABLE` caching: now cached at module load time for performance
-- Fixed `ValueError` handling in `_convert_wav_to_format()`: moved check outside try block
-- Fixed defensive access for `media_types` dict: added explicit error handling for unknown formats
-- Added magic byte validation tests for MP3, Opus, AAC, and FLAC formats
-
-### Changed
-
-- Internal refactoring: consolidated format conversion logic in `tensors_to_formatted_bytes()`
-- Audio encoding helpers are now pure functions with no side effects
-
-## [0.1.1] - 2026-04-16
-
-### Fixed
-
-- Fixed CUDA device loading error: `TypeError in isnan()` when `model.generate()` returns numpy arrays instead of torch tensors ([#13](https://github.com/maemreyo/omnivoice-server/issues/13))
-- Improved `_has_nan()` method in `ModelService` to handle both `torch.Tensor` and `np.ndarray` types, as well as nested lists/tuples
-
-## [0.1.0] - 2026-04-04
-
-### Added
-
-- Initial release of omnivoice-server
-- OpenAI-compatible TTS API (`/v1/audio/speech`)
-- Three voice modes:
-  - Auto: Model selects voice automatically
-  - Design: Specify voice attributes (gender, age, accent, etc.)
-  - Clone: Voice cloning from reference audio
-- Voice profile management API (`/v1/voices/profiles`)
-  - Create, read, update, delete voice cloning profiles
-  - Persistent storage for reusable voice profiles
-- One-shot voice cloning endpoint (`/v1/audio/speech/clone`)
-- Streaming synthesis support (sentence-level chunking)
-- Model listing endpoint (`/v1/models`)
-- Health check endpoint (`/health`)
-- Metrics endpoint (`/metrics`)
-- CLI interface with `omnivoice-server` command
-- Configuration via environment variables or CLI flags
-- Optional Bearer token authentication
-- Concurrent request handling with configurable limits
-- Request timeout protection
-- Audio format support: WAV and raw PCM
-- Speed control (0.25x - 4.0x)
-- Configurable inference steps (1-64)
-- Python client examples
-- cURL examples
-- Streaming audio player example
-- Comprehensive documentation
-- CI/CD workflow with GitHub Actions
-
-### Technical Details
-
-- Built on FastAPI and Uvicorn
-- Uses OmniVoice model from k2-fsa
-- Supports CUDA, MPS, and CPU inference
-- Thread pool executor for concurrent synthesis
-- Pydantic-based configuration and validation
-- Type hints throughout codebase
-- Async/await for I/O operations
-
-[unreleased]: https://github.com/maemreyo/omnivoice-server/compare/v0.2.2...HEAD
-[0.2.2]: https://github.com/maemreyo/omnivoice-server/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/maemreyo/omnivoice-server/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/maemreyo/omnivoice-server/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/maemreyo/omnivoice-server/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/maemreyo/omnivoice-server/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/maemreyo/omnivoice-server/releases/tag/v0.1.0
+### Architectural decisions
+- Sample-rate mismatch (24 vs 44.1 kHz) → server-side resample через `soxr`, query param `?sample_rate=` запланирован параллельно со Sprint 1.
