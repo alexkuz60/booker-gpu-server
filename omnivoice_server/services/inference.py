@@ -21,6 +21,7 @@ import torch
 
 from ..config import Settings
 from .model import ModelService
+from ..locks import MODEL_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -197,15 +198,16 @@ class InferenceService:
 
         timeout_s = timeout_override or self._cfg.request_timeout_s
 
-        async with self._semaphore:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    self._executor,
-                    self._run_sync,
-                    req,
-                ),
-                timeout=timeout_s,
-            )
+        async with MODEL_LOCK:
+            async with self._semaphore:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self._executor,
+                        self._run_sync,
+                        req,
+                    ),
+                    timeout=timeout_s,
+                )
 
         return result
 

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import Settings
-from .routers import health, models, script, speech, voices
+from .routers import health, models, script, speech, voices, denoise
 from .services.inference import InferenceService
 from .services.metrics import MetricsService
 from .services.model import ModelService
@@ -193,6 +193,7 @@ def create_app(cfg: Settings) -> FastAPI:
     app.include_router(voices.router, prefix="/v1")
     app.include_router(models.router, prefix="/v1")
     app.include_router(script.router, prefix="/v1")
+    app.include_router(denoise.router, prefix="/v1")
     app.include_router(health.router)
 
     return app
