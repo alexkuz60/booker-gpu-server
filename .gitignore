@@ -38,3 +38,10 @@ temp.log
 voice_samples/*.wav
 
 .sisyphus/
+# Frontend preview
+node_modules/
+dist/
+
+# Frontend preview
+node_modules/
+dist/
